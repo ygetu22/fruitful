@@ -103,6 +103,11 @@ def _dispatch(cmd, args):
             channels.setGridBit(ch, i, 1 if value else 0)
         return None
 
+    if cmd == "get_pattern":
+        ch = args["channel"]
+        length = args.get("length", 16)
+        return [bool(channels.getGridBit(ch, i)) for i in range(length)]
+
     if cmd == "set_channel_volume":
         channels.setChannelVolume(args["channel"], args["value"])
         return None

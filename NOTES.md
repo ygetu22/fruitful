@@ -41,7 +41,7 @@ fruitful/
   background callback thread; `call()` blocks on a per-request queue until the matching `id` replies.
 - **`server.py`** — One shared `Bridge`, opened lazily so the server starts even before FL is up.
   Exposes bridge health, step programming, channel/mixer control, plugin inspection, project state,
-  and transport tools.
+  and transport tools. `fruitful doctor` performs a direct bridge health check outside MCP.
 
 ---
 
@@ -74,7 +74,8 @@ machine as the command surface expands; FL itself cannot run in CI.
    the input controller type to "Fruitful", and use the same FL port number for both entries.
 4. **Install the server:** `pip install -e .` (ideally in a venv).
 5. **Smoke test:** run a quick `Bridge().call("ping")` and expect `{"pong": true, "fl_version": ...}`.
-6. **Wire to Claude Desktop:** add Fruitful as an MCP server (`fruitful` command) — covered in M5.
+6. **Wire to an MCP client:** add Fruitful as an MCP server (`fruitful` command). Codex CLI is the first
+   terminal client covered in M5.
 
 ### Hardware verification results
 1. `OnMidiIn` receives SysEx payloads on FL Studio MIDI scripting version 45; `OnSysEx` can receive an event
@@ -93,6 +94,19 @@ machine as the command surface expands; FL itself cannot run in CI.
   - Verified step write/clear, channel volume/pan/name/routing writes, and play/stop transport.
   - Corrected the bridge to use one duplex `Fruitful Request` IAC port: FL sends device-script output to the
     script's linked port, so the separate Response bus could not receive replies.
+
+- **2026-09-16** — Started M5 onboarding with a `fruitful doctor` connection check and macOS/Codex CLI
+  setup instructions.
+
+- **2026-09-16** — Validated the terminal workflow end to end: Codex CLI launched Fruitful through MCP and
+  successfully called `ping` against FL Studio MIDI scripting version 45. No project files were changed.
+  - Codex also read the current Channel Rack/mixer state and set channel 0 pan to `-0.25`, then restored it
+    to `0.0`.
+  - Codex programmed and FL Studio played a one-bar trap drum pattern: kick on steps 0/3/8/11, clap on 4/12,
+    and hi-hats on every even step (channels 0, 1, and 2 respectively).
+  - After reloading the device script, `get_pattern` read back each row exactly. Read-only step-pattern state is
+    now hardware-validated.
+  - M5 onboarding changes are locally complete and uncommitted; do not commit or push until the user asks.
 
 - **2026-09-16** — Added the first M4 slice: plugin parameter inspection/editing and compact project-state
   snapshots for Channel Rack channels and mixer tracks.

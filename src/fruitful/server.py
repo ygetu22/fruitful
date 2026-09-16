@@ -6,9 +6,11 @@ FL Studio.
 
 from __future__ import annotations
 
+import sys
+
 from fastmcp import FastMCP
 
-from .bridge import Bridge
+from .bridge import Bridge, BridgeError
 
 mcp = FastMCP("Fruitful")
 
@@ -52,6 +54,19 @@ def program_drum_pattern(channel: int, steps: list[bool]) -> str:
     """
     _bridge.call("program_pattern", channel=channel, steps=[bool(s) for s in steps])
     return f"programmed {len(steps)} steps on channel {channel}"
+
+
+@mcp.tool
+def get_drum_pattern(channel: int, length: int = 16) -> list[bool]:
+    """Read a step-sequencer row from a Channel Rack channel.
+
+    Args:
+        channel: Channel Rack index (0-based).
+        length: Number of steps to read, from 1 to 64.
+    """
+    if not 1 <= length <= 64:
+        raise ValueError("length must be between 1 and 64")
+    return _bridge.call("get_pattern", channel=channel, length=length)
 
 
 @mcp.tool
@@ -154,8 +169,21 @@ def transport(action: str) -> str:
     return f"transport {action} sent"
 
 
+def doctor() -> None:
+    """Check that Fruitful can reach its FL Studio device script."""
+    try:
+        result = Bridge().call("ping")
+    except BridgeError as error:
+        print(f"Fruitful doctor: {error}")
+        raise SystemExit(1) from error
+    print(f"Fruitful doctor: connected to FL Studio (MIDI scripting version {result['fl_version']})")
+
+
 def main() -> None:
-    """Entry point — runs the MCP server over stdio."""
+    """Run the MCP server, or perform a local connection check."""
+    if sys.argv[1:] == ["doctor"]:
+        doctor()
+        return
     mcp.run()
 
 

@@ -134,6 +134,7 @@ Commands map to verified native API functions (see NOTES.md for the API audit).
 | `get_channel_count` | — | `channels.channelCount` | Round-trip sanity read. |
 | `set_grid_bit` | channel, step, value | `channels.setGridBit` | Single step on/off. |
 | `program_pattern` | channel, steps[] | `channels.setGridBit` ×N | Write a whole 16/32-step row. |
+| `get_pattern` | channel, length? | `channels.getGridBit` ×N | Read a step row as booleans; default 16 steps. |
 | `set_channel_volume` | channel, value (0–1) | `channels.setChannelVolume` | |
 | `set_channel_pan` | channel, value (−1..1) | `channels.setChannelPan` | |
 | `set_channel_name` | channel, name | `channels.setChannelName` | |
@@ -143,8 +144,8 @@ Commands map to verified native API functions (see NOTES.md for the API audit).
 | `transport` | action (play/stop/record) | `transport.start`/`stop`/`record` | |
 | `get_project_state` | — | `channels`/`mixer` read APIs | Channels + mixer summary for context. |
 
-The MCP **tool** surface (what Claude sees) wraps these — e.g. a `program_drum_pattern` tool may accept a
-human-friendly grid and expand to several `program_pattern` commands.
+The MCP **tool** surface (what Claude sees) wraps these — e.g. `program_drum_pattern` writes a human-friendly
+row and `get_drum_pattern` reads one back.
 
 ---
 
@@ -157,7 +158,8 @@ human-friendly grid and expand to several `program_pattern` commands.
   gain-staging helpers.
 - **M4 — Plugin parameters & project awareness (validated).** Inspect/set plugin
   parameters by index and read `get_project_state` context snapshots.
-- **M5 — Packaging & onboarding.** `fruitful install` helper, IAC setup docs, Claude Desktop config.
+- **M5 — Packaging & onboarding (validated).** `fruitful doctor` connection check, IAC setup docs, and Codex
+  CLI configuration. Verified with Codex calling `ping` against FL Studio.
 
 ---
 
