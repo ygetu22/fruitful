@@ -32,7 +32,7 @@ note-writing function. See [`SPEC.md`](./SPEC.md) for the rationale.
 
 ```
 Claude Desktop ──MCP──▶ Fruitful server (FastMCP) ──SysEx──▶ FL Studio device script ──▶ FL Studio engine
-                                          (virtual MIDI ports: Request / Response)
+                                          (one duplex virtual MIDI port)
 ```
 
 Commands travel as **SysEx** messages, whose payload is an arbitrary-length byte stream, so Fruitful sends
@@ -40,7 +40,7 @@ structured commands and receives real return values. See [`SPEC.md`](./SPEC.md) 
 
 ## Status
 
-🚧 Early development. Name, scope, and architecture are locked; building the bridge (Milestone 1).
+🚧 Early development. The bridge, drum programming, channel controls, transport, and first project-awareness tools are validated in FL Studio; command coverage is still expanding.
 Private for now — will be made public later.
 
 ## Project layout

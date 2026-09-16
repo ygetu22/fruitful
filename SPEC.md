@@ -45,8 +45,8 @@ set.
 │  Claude Desktop │ ───────────────▶│   Fruitful MCP server  │  virtual MIDI   │  Fruitful device script  │
 │  (MCP client)   │ ◀───────────────│   (FastMCP, normal     │ ───────────────▶│  (inside FL's sandbox)   │
 └─────────────────┘                 │    Python process)     │ ◀───────────────│                          │
-                                     └────────────────────────┘  Request port   └────────────┬─────────────┘
-                                                                  Response port               │ native API calls
+                                      └────────────────────────┘  duplex MIDI port └───────────┬─────────────┘
+                                                                                                 │ native API calls
                                                                                               ▼
                                                                                    ┌──────────────────────┐
                                                                                    │   FL Studio engine    │
@@ -65,8 +65,9 @@ Three components:
 
 ### Virtual MIDI ports
 
-- Two ports: **`Fruitful Request`** (server → FL) and **`Fruitful Response`** (FL → server).
-- On **macOS** these are created with the built-in **IAC Driver** (Audio MIDI Setup) — no third-party tool.
+- One duplex port: **`Fruitful Request`** carries both commands and replies; the SysEx direction byte
+  distinguishes them.
+- On **macOS** it is created with the built-in **IAC Driver** (Audio MIDI Setup) — no third-party tool.
 - On Windows a loopback tool (e.g. loopMIDI) would be required. (Not a v1 target; user is on macOS.)
 
 ---
@@ -137,10 +138,10 @@ Commands map to verified native API functions (see NOTES.md for the API audit).
 | `set_channel_pan` | channel, value (−1..1) | `channels.setChannelPan` | |
 | `set_channel_name` | channel, name | `channels.setChannelName` | |
 | `route_channel_to_mixer` | channel, track | `channels.setTargetFxTrack` | |
-| `set_plugin_param` | index, param, value | `plugins.setParamValue` | By index; name-lookup variant later. |
-| `get_plugin_params` | index | `plugins.getParamName`/`getParamCount` | For Claude to learn a plugin's knobs. |
+| `set_plugin_param` | index, param, value, slot? | `plugins.setParamValue` | Normalized value; slot is `-1` for a Channel Rack generator. |
+| `get_plugin_params` | index, slot? | `plugins.getParamName`/`getParamCount` | Returns names and current values for Claude to learn a plugin's knobs. |
 | `transport` | action (play/stop/record) | `transport.start`/`stop`/`record` | |
-| `get_project_state` | — | multiple read APIs | Channels + mixer summary for context. |
+| `get_project_state` | — | `channels`/`mixer` read APIs | Channels + mixer summary for context. |
 
 The MCP **tool** surface (what Claude sees) wraps these — e.g. a `program_drum_pattern` tool may accept a
 human-friendly grid and expand to several `program_pattern` commands.
@@ -149,23 +150,27 @@ human-friendly grid and expand to several `program_pattern` commands.
 
 ## 6. Milestones
 
-- **M1 — The bridge (current).** SysEx transport both directions. Prove `ping` and `set_grid_bit` round-trip on
+- **M1 — The bridge (validated).** SysEx transport both directions. Prove `ping` and `set_grid_bit` round-trip on
   real hardware. Deliverables: `protocol.py`, `bridge.py`, minimal `device_Fruitful.py`, a `ping` MCP tool.
-- **M2 — Drum programming.** Full step-sequencer command set + a friendly `program_drum_pattern` MCP tool.
-- **M3 — Channel & mixer control.** Volume/pan/name/color/routing, gain-staging helpers.
-- **M4 — Plugin parameters & project awareness.** `set_plugin_param` by name, `get_project_state` for context.
+- **M2 — Drum programming (validated).** Full step-sequencer command set + a friendly `program_drum_pattern` MCP tool.
+- **M3 — Channel & mixer control (validated).** Volume/pan/name/color/routing,
+  gain-staging helpers.
+- **M4 — Plugin parameters & project awareness (validated).** Inspect/set plugin
+  parameters by index and read `get_project_state` context snapshots.
 - **M5 — Packaging & onboarding.** `fruitful install` helper, IAC setup docs, Claude Desktop config.
 
 ---
 
 ## 7. Open items to verify on real hardware
 
-These cannot be confirmed without FL Studio running; flagged here and in NOTES.md:
+Validated against FL Studio MIDI scripting version 45 on macOS:
 
-1. **Inbound SysEx callback** — exact device-script callback that fires on incoming SysEx
-   (`OnSysEx` vs `OnMidiMsg` with `event.sysex`). Confirm and wire accordingly.
-2. **`json` availability** in FL's sandboxed interpreter (expected yes — pure stdlib, not PC-altering).
-3. **SysEx round-trip latency & reliability** under the IAC Driver.
-4. **Outbound SysEx** from the device script — confirm `device.midiOutSysex` (or equivalent) sends on the
-   chosen response port.
-5. **Tempo/BPM** — no direct transport setter; set via a REC event (`REC_Tempo`) — verify approach.
+1. **Inbound SysEx callback** — `OnMidiIn` receives SysEx payloads; `OnSysEx` is a guarded fallback because
+   it may receive an event with no payload.
+2. **`json` availability** — confirmed.
+3. **SysEx round trip** — confirmed with the IAC Driver over one duplex Request port.
+4. **Outbound SysEx** — confirmed on the device script's linked Request port.
+
+Still open:
+
+1. **Tempo/BPM** — use `mixer.setCurrentTempo` where supported; validate when transport expansion begins.

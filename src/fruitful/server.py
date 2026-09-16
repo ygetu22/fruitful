@@ -1,8 +1,7 @@
 """The Fruitful MCP server.
 
 Exposes tools to Claude (or any MCP client) and forwards them across the bridge to
-FL Studio. This is the Milestone-1 surface: enough to prove the round-trip end to end.
-More tools (mixer, plugin params, project state) land in later milestones — see SPEC.md.
+FL Studio.
 """
 
 from __future__ import annotations
@@ -53,6 +52,106 @@ def program_drum_pattern(channel: int, steps: list[bool]) -> str:
     """
     _bridge.call("program_pattern", channel=channel, steps=[bool(s) for s in steps])
     return f"programmed {len(steps)} steps on channel {channel}"
+
+
+@mcp.tool
+def set_channel_volume(channel: int, value: float) -> str:
+    """Set a Channel Rack channel's volume.
+
+    Args:
+        channel: Channel Rack index (0-based).
+        value: Volume from 0.0 (silent) to 1.0 (unity).
+    """
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("value must be between 0.0 and 1.0")
+    _bridge.call("set_channel_volume", channel=channel, value=value)
+    return f"channel {channel} volume set to {value:.3f}"
+
+
+@mcp.tool
+def set_channel_pan(channel: int, value: float) -> str:
+    """Set a Channel Rack channel's pan.
+
+    Args:
+        channel: Channel Rack index (0-based).
+        value: Pan from -1.0 (left) to 1.0 (right), with 0.0 centered.
+    """
+    if not -1.0 <= value <= 1.0:
+        raise ValueError("value must be between -1.0 and 1.0")
+    _bridge.call("set_channel_pan", channel=channel, value=value)
+    return f"channel {channel} pan set to {value:.3f}"
+
+
+@mcp.tool
+def set_channel_name(channel: int, name: str) -> str:
+    """Rename a Channel Rack channel.
+
+    Args:
+        channel: Channel Rack index (0-based).
+        name: New channel name.
+    """
+    if not name.strip():
+        raise ValueError("name must not be empty")
+    _bridge.call("set_channel_name", channel=channel, name=name)
+    return f"channel {channel} renamed to {name!r}"
+
+
+@mcp.tool
+def route_channel_to_mixer(channel: int, track: int) -> str:
+    """Route a Channel Rack channel to a mixer track.
+
+    Args:
+        channel: Channel Rack index (0-based).
+        track: Mixer track number as used by FL Studio.
+    """
+    _bridge.call("route_channel_to_mixer", channel=channel, track=track)
+    return f"channel {channel} routed to mixer track {track}"
+
+
+@mcp.tool
+def get_plugin_params(index: int, slot: int = -1) -> list[dict]:
+    """List the parameters exposed by a channel generator or mixer effect.
+
+    Args:
+        index: Channel Rack index for a generator, or mixer track index for an effect.
+        slot: Mixer effect slot; leave at -1 for a Channel Rack generator.
+    """
+    return _bridge.call("get_plugin_params", index=index, slot=slot)
+
+
+@mcp.tool
+def set_plugin_param(index: int, param: int, value: float, slot: int = -1) -> str:
+    """Set a plugin parameter by its zero-based index.
+
+    Args:
+        index: Channel Rack index for a generator, or mixer track index for an effect.
+        param: Zero-based plugin parameter index.
+        value: Normalized parameter value from 0.0 to 1.0.
+        slot: Mixer effect slot; leave at -1 for a Channel Rack generator.
+    """
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("value must be between 0.0 and 1.0")
+    _bridge.call("set_plugin_param", index=index, param=param, value=value, slot=slot)
+    return f"plugin parameter {param} set to {value:.3f}"
+
+
+@mcp.tool
+def get_project_state() -> dict:
+    """Return a compact snapshot of Channel Rack channels and mixer tracks."""
+    return _bridge.call("get_project_state")
+
+
+@mcp.tool
+def transport(action: str) -> str:
+    """Control FL Studio playback.
+
+    Args:
+        action: One of "play", "stop", or "record".
+    """
+    if action not in {"play", "stop", "record"}:
+        raise ValueError('action must be one of "play", "stop", or "record"')
+    _bridge.call("transport", action=action)
+    return f"transport {action} sent"
 
 
 def main() -> None:

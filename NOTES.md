@@ -36,9 +36,12 @@ fruitful/
 - **`device_Fruitful.py`** — Cannot import our package (FL sandbox), so it **re-implements** the
   protocol inline using only stdlib `json`. **If you change `protocol.py`, change this too.** It
   never crashes the script: any command error is caught and returned as `{"ok": false, "error": ...}`.
-- **`bridge.py`** — Matches port names by substring (MIDI backends decorate names). Receives on a
+- **`bridge.py`** — Matches port names by substring (MIDI backends decorate names). Uses one duplex
+  `Fruitful Request` port because FL sends to a device script's linked output. Receives on a
   background callback thread; `call()` blocks on a per-request queue until the matching `id` replies.
 - **`server.py`** — One shared `Bridge`, opened lazily so the server starts even before FL is up.
+  Exposes bridge health, step programming, channel/mixer control, plugin inspection, project state,
+  and transport tools.
 
 ---
 
@@ -60,31 +63,49 @@ fruitful/
 
 ## Setup & testing (manual — needs FL Studio)
 
-The code is complete for Milestone 1 but **must be tested on the real machine** (FL can't run in CI).
+M1-M4 are validated against FL Studio's MIDI scripting version 45. Keep regression-testing on the real
+machine as the command surface expands; FL itself cannot run in CI.
 
-1. **Create virtual MIDI ports (macOS):** Open *Audio MIDI Setup* → *MIDI Studio* → double-click
-   *IAC Driver* → enable "Device is online" → add two ports named **`Fruitful Request`** and
-   **`Fruitful Response`**.
+1. **Create a virtual MIDI port (macOS):** Open *Audio MIDI Setup* → *MIDI Studio* → double-click
+   *IAC Driver* → enable "Device is online" → name a port **`Fruitful Request`**.
 2. **Install the device script:** copy `device/device_Fruitful.py` into a subfolder under FL's
    hardware scripts dir (e.g. `.../FL Studio/Settings/Hardware/Fruitful/`).
-3. **Configure FL:** Options → MIDI Settings → set the `Fruitful Request` input's controller type to
-   "Fruitful", enable input; enable `Fruitful Response` as an output.
+3. **Configure FL:** Options → MIDI Settings → enable `Fruitful Request` as both input and output, assign
+   the input controller type to "Fruitful", and use the same FL port number for both entries.
 4. **Install the server:** `pip install -e .` (ideally in a venv).
 5. **Smoke test:** run a quick `Bridge().call("ping")` and expect `{"pong": true, "fl_version": ...}`.
 6. **Wire to Claude Desktop:** add Fruitful as an MCP server (`fruitful` command) — covered in M5.
 
-### Open items to verify on hardware (see SPEC.md §7)
-1. Exact inbound-SysEx callback name (`OnSysEx` vs `OnMidiMsg`+`event.sysex`).
-2. `json` availability in FL's sandboxed interpreter (expected yes).
-3. SysEx round-trip latency/reliability over the IAC Driver.
-4. Outbound `device.midiOutSysex` sends on the intended Response port.
+### Hardware verification results
+1. `OnMidiIn` receives SysEx payloads on FL Studio MIDI scripting version 45; `OnSysEx` can receive an event
+   with `sysex` set to `None`, so it remains a guarded fallback.
+2. `json` is available in FL's sandbox.
+3. SysEx request/response works over the macOS IAC Driver using one duplex `Fruitful Request` port.
+4. `device.midiOutSysex` returns on the linked Request port. The protocol direction byte separates commands
+   from replies.
 
 ---
 
 ## Session log
 
+- **2026-09-16** — Validated M1-M4 against FL Studio MIDI scripting version 45.
+  - Verified bridge ping, channel count, compact project state, plugin parameter inspection, and plugin writes.
+  - Verified step write/clear, channel volume/pan/name/routing writes, and play/stop transport.
+  - Corrected the bridge to use one duplex `Fruitful Request` IAC port: FL sends device-script output to the
+    script's linked port, so the separate Response bus could not receive replies.
+
+- **2026-09-16** — Added the first M4 slice: plugin parameter inspection/editing and compact project-state
+  snapshots for Channel Rack channels and mixer tracks.
+
+- **2026-09-15** — Installed the device script at
+  `/Volumes/LaCie/FLStudioData/FL Studio/Settings/Hardware/Fruitful/device_Fruitful.py`.
+  - Local syntax compilation and SysEx protocol round-trip pass.
+  - Awaiting IAC virtual-port and FL Studio MIDI configuration for the hardware smoke test.
+- **2026-09-15** — Added MCP/device commands for channel volume, pan, rename, mixer routing, and
+  play/stop/record transport control.
 - **2026-06-14** — Research → decisions → first code.
   - Resolved feasibility (native API audit), locked name/scope/architecture.
   - Wrote README, SPEC, NOTES; scaffolded package + FL device script.
   - **Milestone 1 code complete & locally verified** (syntax compiles; protocol round-trip + 7-bit
-    safety tested). Not yet tested against FL Studio. Not yet committed (awaiting go-ahead).
+    safety tested). Not yet tested against FL Studio.
+  - Initial commit `e2b8921` (local; not pushed to a remote yet).

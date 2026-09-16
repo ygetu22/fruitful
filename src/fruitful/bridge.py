@@ -1,7 +1,7 @@
 """The Fruitful bridge client.
 
-Opens the two virtual MIDI ports, sends commands to FL Studio as SysEx on the
-Request port, and awaits the matching reply on the Response port.
+Opens Fruitful's virtual MIDI port, sends commands to FL Studio as SysEx, and
+awaits the matching reply on that same duplex port.
 
 Communication is request/response with `id` correlation: `call()` sends a frame and
 blocks until a Response frame with the same `id` arrives (or it times out — which
@@ -19,7 +19,9 @@ import mido
 from . import protocol
 
 REQUEST_PORT = "Fruitful Request"
-RESPONSE_PORT = "Fruitful Response"
+# FL sends from a device script to the output linked to that same device. The
+# request bus is therefore duplex; protocol directions distinguish replies.
+RESPONSE_PORT = REQUEST_PORT
 DEFAULT_TIMEOUT = 5.0
 
 
