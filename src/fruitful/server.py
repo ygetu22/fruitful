@@ -11,6 +11,8 @@ import sys
 from fastmcp import FastMCP
 
 from .bridge import Bridge, BridgeError
+from .sounds import search_freesound
+from .styles import get_style, list_styles
 
 mcp = FastMCP("Fruitful")
 
@@ -154,6 +156,34 @@ def set_plugin_param(index: int, param: int, value: float, slot: int = -1) -> st
 def get_project_state() -> dict:
     """Return a compact snapshot of Channel Rack channels and mixer tracks."""
     return _bridge.call("get_project_state")
+
+
+@mcp.tool
+def list_genre_starters() -> list[dict]:
+    """List Fruitful's curated genre starter blueprints and their required sound roles."""
+    return list_styles()
+
+
+@mcp.tool
+def get_genre_starter(style: str) -> dict:
+    """Return a detailed, editable production plan for a genre starter.
+
+    The plan includes target tempo, harmonic direction, required sound roles, section layout,
+    and a production brief. It does not modify the current FL Studio project.
+    """
+    return get_style(style)
+
+
+@mcp.tool
+def search_cc0_sounds(query: str, limit: int = 10) -> dict:
+    """Search Freesound for Creative Commons Zero sounds suited to a production role.
+
+    Requires the free `FREESOUND_API_TOKEN` environment variable. Results are sound metadata
+    and preview URLs only, cached locally for seven days; Fruitful never downloads or imports a
+    sound without an explicit future user action.
+    """
+    return search_freesound(query, limit)
+
 
 
 @mcp.tool
