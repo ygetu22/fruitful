@@ -1,91 +1,65 @@
-# 🍊 Fruitful
+# Fruitful
 
-> Your AI co-producer for FL Studio.
+Control FL Studio from your AI assistant. Program drums, adjust channels and plugins, and read your project state.
 
-**Fruitful** is an open-source [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that
-connects the Claude desktop app to **FL Studio**, letting you produce music with natural-language prompts.
+**macOS beta in preparation.** A final FL Studio walkthrough is still pending.
 
-The mission: lower the entry barrier to music production — the theory and the DAW learning curve — and act as a
-genuine co-pilot for advanced producers.
+## Get started
 
-## Design philosophy
+You need **FL Studio**, [uv](https://docs.astral.sh/uv/getting-started/installation/), and an MCP-compatible AI client.
+Fruitful uses your client's model access; no AI API key is needed by Fruitful itself.
 
-Fruitful is built around FL Studio's **native MIDI Controller Scripting API**, using only directly supported
-operations so that every action is deterministic and reliable. Rather than emulating note input, it issues
-structured commands and reads project state, giving Claude accurate context to work from.
+### 1. Install
 
-This keeps the v1 surface focused on what the API supports well today:
-
-| Capability | How |
-| --- | --- |
-| 🥁 Drum / beat programming | Reads and writes step-sequencer patterns directly (`channels.getGridBit` / `setGridBit`) |
-| 🎚️ Channel control | Volume, pan, name, color, pitch, mute/solo, route to mixer track |
-| 🎛️ Plugin parameter control | Inspect and tune native or third-party plugin parameters by index (`plugins.setParamValue`) |
-| 🎚️ Mixer control | Gain staging, routing, naming |
-| ▶️ Transport | Play / stop / record / loop / position |
-| 🧠 Project awareness | Reads your actual rack, mixer, and plugins so Claude acts on context |
-
-Piano-roll note authoring is intentionally out of scope for v1: FL's API does not expose a native, persistent
-note-writing function. See [`SPEC.md`](./SPEC.md) for the rationale.
-
-## How it works
-
-```
-Claude Desktop ──MCP──▶ Fruitful server (FastMCP) ──SysEx──▶ FL Studio device script ──▶ FL Studio engine
-                                          (one duplex virtual MIDI port)
-```
-
-Commands travel as **SysEx** messages, whose payload is an arbitrary-length byte stream, so Fruitful sends
-structured commands and receives real return values. See [`SPEC.md`](./SPEC.md) for the full design.
-
-## Status
-
-🚧 Early development. The bridge, drum programming, channel controls, transport, and first project-awareness tools are validated in FL Studio and reachable from Codex CLI; command coverage is still expanding.
-Private for now — will be made public later.
-
-## Setup
-
-Fruitful currently targets macOS and FL Studio MIDI scripting version 45.
-
-1. In macOS **Audio MIDI Setup** > **MIDI Studio**, enable the IAC Driver and create a port named
-   `Fruitful Request`.
-2. Install the device script at
-   `.../FL Studio/Settings/Hardware/Fruitful/device_Fruitful.py`.
-3. In FL Studio **Options** > **MIDI Settings**, enable `Fruitful Request` as both input and output. Set the
-   input controller type to `Fruitful` and give both entries the same FL port number.
-4. From this repository, create a Python 3.12 virtual environment and install the package with
-   [`uv`](https://docs.astral.sh/uv/):
-
-   ```bash
-   uv venv --python 3.12
-   uv pip install -e .
-   ```
-
-5. With FL Studio open, verify the connection:
-
-   ```bash
-   .venv/bin/fruitful doctor
-   ```
-
-   A successful check reports the FL Studio MIDI scripting version.
-
-### Codex CLI
-
-Fruitful is a local stdio MCP server, so it works with compatible terminal clients. Add it to Codex CLI with:
+In the Fruitful source folder:
 
 ```bash
-codex mcp add fruitful -- /Users/yakob/projects/fruitful/.venv/bin/fruitful
+uv venv --python 3.12
+uv pip install --python .venv/bin/python .
+.venv/bin/fruitful setup
 ```
 
-Confirm it is registered with `codex mcp list`, then start `codex` in a terminal and ask it to use Fruitful's
-`ping` tool. Keep FL Studio open while using the server.
+Setup asks for FL Studio's **Settings** folder. Find it inside the User data folder shown in
+**FL Studio → Options → File settings**. Setup installs the device script and prints the command to use in your AI client.
 
-Other MCP-compatible clients can launch the same `fruitful` command; Fruitful does not depend on Claude Desktop.
+### 2. Connect FL Studio
 
-## Project layout
+- Open macOS **Audio MIDI Setup → MIDI Studio → IAC Driver**.
+- Enable **Device is online** and add a bus named **Fruitful Request**.
+- In FL's **MIDI Settings**, enable that bus as both input and output. Give both the same port number.
+- Set the input controller type to **Fruitful**.
 
-See [`NOTES.md`](./NOTES.md) for a living, file-by-file guide and the decision log.
+Then check the connection:
 
-## License
+```bash
+.venv/bin/fruitful doctor
+```
 
-TBD (will be set before going public).
+### 3. Connect your AI client
+
+Add a **local stdio MCP server** named `fruitful`. Paste the command printed by setup. Leave arguments empty.
+Keep FL Studio open, then ask: **“Check Fruitful's connection and show me the channels in my project.”**
+
+### 4. Make a beat
+
+In a scratch FL project, load three drum sounds and name their channels **Kick**, **Clap**, and **Closed Hat**.
+Select an empty one-bar pattern, then ask:
+
+> Create a house beat at 124 BPM without playing it. Check the drum rows after writing them.
+
+Fruitful writes the current pattern and changes the tempo. Ask it to play when you're ready.
+Save a copy before editing: failed operations can leave some changes applied.
+
+## What it does
+
+- Reads and writes drum steps.
+- Changes channel volume, pan, names, and mixer routing.
+- Inspects and adjusts plugin parameters.
+- Reads project state; controls tempo, play, stop, and record.
+- Creates a house groove using your loaded drums, then checks the written rows and tempo.
+- Provides genre planning notes. It does not automatically produce or export complete songs.
+
+[Piano Roll, sound search, and other optional setup](docs/OPTIONAL_FEATURES.md) ·
+[Troubleshooting](docs/TROUBLESHOOTING.md) · [Development and release status](docs/BETA_SCOPE.md)
+
+[MIT license](LICENSE)

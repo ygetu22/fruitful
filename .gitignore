@@ -19,3 +19,5 @@ env/
 # Local env / secrets
 .env
 .env.local
+.env.*
+!.env.example

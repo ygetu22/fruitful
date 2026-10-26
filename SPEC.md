@@ -1,132 +1,71 @@
-# Fruitful — Technical Specification
+# Architecture and protocol
 
-Version 0.1 (draft) · 2026-06-14
+Fruitful is a local stdio MCP server. It forwards commands to an FL Studio device script over a virtual MIDI
+bus. The core tools use FL's controller scripting APIs; optional Piano Roll writing uses a separate file/shortcut
+bridge. Public feature scope lives in [BETA_SCOPE.md](docs/BETA_SCOPE.md).
 
-This document defines how Fruitful is built. It is the source of truth for the architecture, the wire protocol,
-and the milestone plan. Implementation details and a file-by-file guide live in [`NOTES.md`](./NOTES.md).
+## Components
 
----
-
-## 1. Goals & non-goals
-
-**Goals**
-- Connect Claude (or any MCP client) to FL Studio for natural-language music production.
-- Be **reliable**: build only on FL's directly-supported native scripting API, so every action is deterministic.
-- Cover the full set of natively supported capabilities — plugin-parameter control, channel routing, and
-  project-state awareness — not only drum patterns.
-
-**Non-goals (v1)**
-- Writing notes/chords/melodies into the **piano roll**. FL's API exposes no native persistent note-write
-  function, so this is deferred until/unless Image-Line adds one.
-- Arrangement/playlist authoring (arrangement module is largely read-only).
-
----
-
-## 2. The core constraint
-
-FL Studio's MIDI Controller Scripting runs inside FL in a **stripped-down, sandboxed Python interpreter** that
-blocks operations which could alter the user's PC. As a result, **sockets and file I/O are unreliable/unsupported
-inside the device script.** The only universally reliable channel in and out of the script is **MIDI**.
-
-Standard MIDI note messages carry only 7-bit values, which is limiting for arbitrary structured data. Fruitful
-instead uses **System Exclusive (SysEx)** messages, whose payload is an arbitrary-length byte stream. That lets
-it send *structured commands* and receive *return values* without that limitation.
-
-This general approach is demonstrated by [Flapi](https://github.com/MaddyGuthridge/Flapi), which we credit as
-prior art. As Flapi is currently unmaintained, Fruitful implements its own focused bridge scoped to its command
-set.
-
----
-
-## 3. Architecture
-
-```
-┌─────────────────┐   MCP (stdio)   ┌────────────────────────┐   SysEx over    ┌──────────────────────────┐
-│  Claude Desktop │ ───────────────▶│   Fruitful MCP server  │  virtual MIDI   │  Fruitful device script  │
-│  (MCP client)   │ ◀───────────────│   (FastMCP, normal     │ ───────────────▶│  (inside FL's sandbox)   │
-└─────────────────┘                 │    Python process)     │ ◀───────────────│                          │
-                                      └────────────────────────┘  duplex MIDI port └───────────┬─────────────┘
-                                                                                                 │ native API calls
-                                                                                              ▼
-                                                                                   ┌──────────────────────┐
-                                                                                   │   FL Studio engine    │
-                                                                                   └──────────────────────┘
+```text
+MCP client ↔ Fruitful server ↔ MIDI/SysEx ↔ FL device script ↔ FL Studio
 ```
 
-Three components:
+- `server.py` owns tool definitions and multi-step workflows.
+- `bridge.py` owns MIDI ports, request IDs, timeouts, and cleanup.
+- `device_Fruitful.py` runs in FL and dispatches validated commands to native APIs.
+- One duplex IAC bus, **Fruitful Request**, carries both directions. FL's linked device output sends replies
+  back over that bus. Windows/Linux configuration is outside this beta.
 
-1. **MCP server** (`src/fruitful/server.py`) — a FastMCP server exposing tools to Claude. Translates tool calls
-   into Fruitful commands and sends them over the bridge.
-2. **Bridge client** (`src/fruitful/bridge.py`) — opens the virtual MIDI ports via `mido`/`python-rtmidi`,
-   encodes commands to SysEx, sends on the Request port, awaits the matching reply on the Response port.
-3. **Device script** (`device/device_Fruitful.py`) — installed into FL's MIDI scripts folder. Receives SysEx,
-   decodes the command, calls the native FL API (`channels`, `mixer`, `plugins`, `transport`, …), and sends the
-   result back as SysEx.
+The MIDI approach was informed by [Flapi](https://github.com/MaddyGuthridge/Flapi). Fruitful implements its own
+command bridge.
 
-### Virtual MIDI ports
+## SysEx frame
 
-- One duplex port: **`Fruitful Request`** carries both commands and replies; the SysEx direction byte
-  distinguishes them.
-- On **macOS** it is created with the built-in **IAC Driver** (Audio MIDI Setup) — no third-party tool.
-- On Windows a loopback tool (e.g. loopMIDI) would be required. (Not a v1 target; user is on macOS.)
-
----
-
-## 4. Wire protocol (SysEx)
-
-### Frame
-
-```
-F0  7D  <direction>  <ascii-json-payload...>  F7
+```text
+F0 7D <direction> <ASCII JSON> F7
 ```
 
-- `F0` / `F7` — SysEx start / end (MIDI standard).
-- `7D` — the SysEx manufacturer ID reserved for **non-commercial / educational** use. Safe, no registration.
-- `<direction>` — `0x01` = request (server → FL), `0x02` = response (FL → server).
-- `<ascii-json-payload>` — the command/result as **ASCII JSON**.
+- F0/F7 frame the message. Mido handles them outside the payload.
+- 7D is the non-commercial/educational SysEx manufacturer ID used by this implementation.
+- Direction 01 means request; 02 means response.
+- JSON uses ASCII escapes so each payload byte stays within MIDI's 7-bit range. Outgoing requests reject
+  nonfinite numbers. The device script mirrors the protocol constants because it cannot import this package.
 
-**Why ASCII JSON?** Every byte between `F0` and `F7` must be 7-bit (`0x00`–`0x7F`). `json.dumps(obj)` with the
-default `ensure_ascii=True` emits only ASCII bytes (non-ASCII becomes `\uXXXX` escapes), so the JSON string drops
-straight into the SysEx payload with no extra encoding layer. Simple and robust.
-
-### Request payload
+Request:
 
 ```json
-{ "id": 42, "cmd": "set_grid_bit", "args": { "channel": 0, "step": 4, "value": 1 } }
+{"id": 42, "cmd": "set_grid_bit", "args": {"channel": 0, "step": 4, "value": 1}}
 ```
 
-- `id` — monotonically increasing integer, used to correlate the reply.
-- `cmd` — a Fruitful command name (see §5). Higher-level than raw API calls where useful.
-- `args` — named arguments.
-
-### Response payload
+Response:
 
 ```json
-{ "id": 42, "ok": true, "result": null }
+{"id": 42, "ok": true, "result": null}
 ```
 
-or on failure:
+Failure:
 
 ```json
-{ "id": 42, "ok": false, "error": "channel index 99 out of range" }
+{"id": 42, "ok": false, "error": "Channel no longer exists."}
 ```
 
-### Correlation & timeouts
+Request IDs increase from a random starting value per bridge, so separate local clients do not normally reuse
+IDs. Replies must match a pending ID. Malformed, unrelated, and duplicate replies are ignored.
 
-The client sends a request and blocks until a Response frame with the matching `id` arrives, or a timeout
-(default 5 s) elapses. FL processes the command on its own event loop, so replies are near-immediate but the
-timeout guards against a missing/uninstalled device script.
+## Failure behavior
 
-### Chunking (future)
+Each bridge serializes requests. The default reply timeout is five seconds. Failed sends and timeouts remove
+pending requests and close ports; a later call can reopen them. Writes are never retried automatically because
+FL may already have applied a command whose reply was lost.
 
-A single SysEx message can be large, but very large payloads (e.g. full project-state dumps) may need chunking.
-v1 keeps payloads small; chunking is a documented future extension (add `seq`/`total` fields to the frame).
+MIDI calls are serialized per request, not across a whole workflow or across processes. Don't edit the target
+pattern or run competing write clients during House Starter. It checks each written drum row and the applied
+tempo before success. Errors report confirmed rows; there is no automatic rollback.
 
----
+## Device commands
 
-## 5. Command set (v1)
-
-Commands map to verified native API functions (see NOTES.md for the API audit).
+These are the implemented dispatch commands. Earlier live sessions exercised the original versions;
+regression tests simulate FL responses. The revised scripts still need the deferred live walkthrough.
 
 | `cmd` | Args | FL API used | Notes |
 | --- | --- | --- | --- |
@@ -141,38 +80,30 @@ Commands map to verified native API functions (see NOTES.md for the API audit).
 | `route_channel_to_mixer` | channel, track | `channels.setTargetFxTrack` | |
 | `set_plugin_param` | index, param, value, slot? | `plugins.setParamValue` | Normalized value; slot is `-1` for a Channel Rack generator. |
 | `get_plugin_params` | index, slot? | `plugins.getParamName`/`getParamCount` | Returns names and current values for Claude to learn a plugin's knobs. |
+| `get_plugin_param_page` | index, start?, limit?, slot? | `plugins.getParamName`/`getParamCount` | Bounded page (maximum 64) for large plugin parameter surfaces. |
+| `get_tempo` | — | `mixer.getCurrentTempo` | Returns the current project tempo in BPM (Fruitful normalizes FL's internal 1,000x value). |
+| `set_tempo` | bpm | `mixer.setCurrentTempo` | Sets and returns BPM; Fruitful converts to/from FL's internal 1,000x value. |
 | `transport` | action (play/stop/record) | `transport.start`/`stop`/`record` | |
 | `get_project_state` | — | `channels`/`mixer` read APIs | Channels + mixer summary for context. |
 
-The MCP **tool** surface (what Claude sees) wraps these — e.g. `program_drum_pattern` writes a human-friendly
-row and `get_drum_pattern` reads one back.
 
----
+MCP tool names may differ: `program_drum_pattern` wraps `program_pattern`, and `get_drum_pattern` wraps
+`get_pattern`. The MCP `get_plugin_params` tool fetches multiple bounded pages; the direct device command of
+that name returns at most one 64-entry page. Prefer `get_plugin_param_page` for large instruments.
 
-## 6. Milestones
+## Experimental Piano Roll bridge
 
-- **M1 — The bridge (validated).** SysEx transport both directions. Prove `ping` and `set_grid_bit` round-trip on
-  real hardware. Deliverables: `protocol.py`, `bridge.py`, minimal `device_Fruitful.py`, a `ping` MCP tool.
-- **M2 — Drum programming (validated).** Full step-sequencer command set + a friendly `program_drum_pattern` MCP tool.
-- **M3 — Channel & mixer control (validated).** Volume/pan/name/color/routing,
-  gain-staging helpers.
-- **M4 — Plugin parameters & project awareness (validated).** Inspect/set plugin
-  parameters by index and read `get_project_state` context snapshots.
-- **M5 — Packaging & onboarding (validated).** `fruitful doctor` connection check, IAC setup docs, and Codex
-  CLI configuration. Verified with Codex calling `ping` against FL Studio.
+The installer generates the script's directory. The server writes a request with a UUID to that directory,
+then triggers FL's remembered Piano Roll script. FL consumes the request before editing and prepares all notes
+before a replace operation clears the existing score. This prevents simple replay and invalid-input clearing;
+it does not guarantee rollback if FL fails while applying notes.
 
----
+The server waits for a matching response UUID. This workflow requires the correct Piano Roll to be focused,
+the configured shortcut, and macOS permissions. Use one Piano Roll client at a time; the request files are
+shared. Keep it experimental until the generated script is verified in FL.
 
-## 7. Open items to verify on real hardware
+## Verification
 
-Validated against FL Studio MIDI scripting version 45 on macOS:
-
-1. **Inbound SysEx callback** — `OnMidiIn` receives SysEx payloads; `OnSysEx` is a guarded fallback because
-   it may receive an event with no payload.
-2. **`json` availability** — confirmed.
-3. **SysEx round trip** — confirmed with the IAC Driver over one duplex Request port.
-4. **Outbound SysEx** — confirmed on the device script's linked Request port.
-
-Still open:
-
-1. **Tempo/BPM** — use `mixer.setCurrentTempo` where supported; validate when transport expansion begins.
+See [ONBOARDING_VERIFICATION.md](docs/ONBOARDING_VERIFICATION.md) for current checks and limits. Earlier September
+sessions confirmed SysEx round trips, the linked output bus, and FL's tempo scaling (BPM × 1,000 at the native
+API boundary). Those sessions do not certify later changes or additional platforms.
