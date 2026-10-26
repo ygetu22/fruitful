@@ -7,7 +7,6 @@ FL Studio.
 from __future__ import annotations
 
 import math
-import sys
 
 from fastmcp import FastMCP
 
@@ -253,22 +252,13 @@ def transport(action: str) -> str:
     return f"transport {action} sent"
 
 
-def doctor() -> None:
-    """Check that Fruitful can reach its FL Studio device script."""
-    try:
-        result = Bridge().call("ping")
-    except BridgeError as error:
-        print(f"Fruitful doctor: {error}")
-        raise SystemExit(1) from error
-    print(f"Fruitful doctor: connected to FL Studio (MIDI scripting version {result['fl_version']})")
 
 
 def main() -> None:
-    """Run the MCP server, or perform a local connection check."""
-    if sys.argv[1:] == ["doctor"]:
-        doctor()
-        return
-    mcp.run()
+    """Keep the module entry point consistent with the installed CLI."""
+    from .cli import main as cli_main
+
+    cli_main()
 
 
 if __name__ == "__main__":
