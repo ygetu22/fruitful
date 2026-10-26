@@ -2,7 +2,8 @@
 
 Control FL Studio from your AI assistant. Program drums, adjust channels and plugins, and read your project state.
 
-**macOS beta in preparation.** A final FL Studio walkthrough is still pending.
+**macOS beta.** The latest changes passed software checks; a final FL Studio walkthrough is still pending.
+Piano Roll tools are experimental.
 
 ## Get started
 
@@ -11,9 +12,11 @@ Fruitful uses your client's model access; no AI API key is needed by Fruitful it
 
 ### 1. Install
 
-In the Fruitful source folder:
+Download the source, then install:
 
 ```bash
+git clone https://github.com/ygetu22/fruitful.git
+cd fruitful
 uv venv --python 3.12
 uv pip install --python .venv/bin/python .
 .venv/bin/fruitful setup

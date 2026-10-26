@@ -21,7 +21,7 @@ Onboarding, MIDI failure handling, command validation, beat readback, and sound-
 coverage. Tests use temporary files and fake FL/provider responses. A real MCP client also checks startup and
 local planning tools. See [verification notes](ONBOARDING_VERIFICATION.md).
 
-## Before release
+## Before a stable release
 
 - Complete the live FL walkthrough and check the supported FL version. Live testing is deferred at Yakob's request.
 - Check the README on a second machine and in the intended AI client.

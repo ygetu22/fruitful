@@ -1,6 +1,6 @@
 [project]
 name = "fruitful"
-version = "0.1.0"
+version = "0.1.0b1"
 description = "Control FL Studio through a local MCP server."
 license = "MIT"
 license-files = ["LICENSE"]
