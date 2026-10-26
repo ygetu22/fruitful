@@ -27,7 +27,7 @@ packages = ["src/fruitful"]
 "pianoroll/Fruitful Apply.pyscript" = "fruitful/resources/Fruitful Apply.pyscript"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/fruitful", "device", "pianoroll", "tests", "README.md", "LICENSE", "SPEC.md", "NOTES.md", "docs", "pyproject.toml"]
+include = ["src/fruitful", "device", "pianoroll", "tests", "README.md", "LICENSE", "SECURITY.md", "SPEC.md", "NOTES.md", "docs", "pyproject.toml"]
 
 [tool.ruff]
 target-version = "py312"
