@@ -93,7 +93,7 @@ class McpStartupTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(initialized.serverInfo.name, "Fruitful")
                         tools = await session.list_tools()
                         names = {tool.name for tool in tools.tools}
-                        self.assertTrue({"ping", "get_project_state"} <= names)
+                        self.assertTrue({"ping", "get_project_state", "start_house_beat"} <= names)
                         result = await session.call_tool("list_genre_starters", {})
                         self.assertFalse(result.isError)
                         self.assertTrue(result.content)

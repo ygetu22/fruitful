@@ -1,5 +1,5 @@
 # name=Fruitful
-# url=https://github.com/  (TBD)
+# url=https://github.com/ygetu22/fruitful
 # supportedDevices=Fruitful Request
 """Fruitful device script — runs INSIDE FL Studio's MIDI scripting sandbox.
 
@@ -17,17 +17,20 @@ The sandbox can't import our package, so the logic is inlined and dependency-fre
 """
 
 import json
+import math
 
 import channels
-import device
 import general
 import mixer
 import plugins
 import transport
 
+import device
+
 MANUFACTURER_ID = 0x7D
 DIR_REQUEST = 0x01
 DIR_RESPONSE = 0x02
+TEMPO_SCALE = 1000
 
 
 def OnInit():
@@ -76,17 +79,105 @@ def _send_response(payload):
 
 
 def _handle(req):
+    if not isinstance(req, dict):
+        return
     rid = req.get("id")
     cmd = req.get("cmd")
     args = req.get("args") or {}
     try:
+        if not isinstance(cmd, str) or not isinstance(args, dict):
+            raise ValueError("A command needs a name and an argument object.")
         result = _dispatch(cmd, args)
         _send_response({"id": rid, "ok": True, "result": result})
     except Exception as e:  # surface the error back to the client, never crash the script
         _send_response({"id": rid, "ok": False, "error": str(e)})
 
 
+def _plugin_param_page(index, slot, start, limit):
+    if not plugins.isValid(index, slot):
+        raise ValueError("no valid plugin at index %r, slot %r" % (index, slot))
+    if start < 0:
+        raise ValueError("start must not be negative")
+    if not 1 <= limit <= 64:
+        raise ValueError("limit must be between 1 and 64")
+    total = plugins.getParamCount(index, slot)
+    params = []
+    for i in range(start, min(start + limit, total)):
+        try:
+            value_string = plugins.getParamValueString(i, index, slot)
+        except Exception:
+            # FL only supports the formatted value for some plugins.
+            value_string = None
+        params.append(
+            {
+                "index": i,
+                "name": plugins.getParamName(i, index, slot),
+                "value": plugins.getParamValue(i, index, slot),
+                "value_string": value_string,
+            }
+        )
+    return {"total": total, "start": start, "params": params}
+
+
 def _dispatch(cmd, args):
+    if "channel" in args:
+        channel = args["channel"]
+        if type(channel) is not int or not 0 <= channel < channels.channelCount():
+            raise ValueError(
+                "Channel no longer exists. Read the project state and choose a channel again."
+            )
+    if cmd == "set_grid_bit":
+        if (
+            type(args.get("step")) is not int
+            or not 0 <= args["step"] <= 63
+            or args.get("value") not in (0, 1)
+        ):
+            raise ValueError("Use a step from 0 to 63 and a value of 0 or 1.")
+    if cmd == "program_pattern":
+        steps = args.get("steps")
+        if (
+            not isinstance(steps, list)
+            or not 1 <= len(steps) <= 64
+            or any(type(step) is not bool for step in steps)
+        ):
+            raise ValueError("A drum row needs 1 to 64 true/false steps.")
+    if cmd == "get_pattern":
+        length = args.get("length", 16)
+        if type(length) is not int or not 1 <= length <= 64:
+            raise ValueError("length must be between 1 and 64.")
+    if cmd in ("set_channel_volume", "set_channel_pan", "set_plugin_param"):
+        value = args.get("value")
+        minimum = -1 if cmd == "set_channel_pan" else 0
+        if type(value) not in (int, float) or not math.isfinite(value) or not minimum <= value <= 1:
+            raise ValueError("Control value is outside its allowed range.")
+    if cmd == "set_channel_name":
+        name = args.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name) > 80:
+            raise ValueError("name must contain 1 to 80 characters.")
+    if cmd == "route_channel_to_mixer":
+        track = args.get("track")
+        if type(track) is not int or not 0 <= track < mixer.getTrackCount():
+            raise ValueError("Mixer track no longer exists. Read the project state again.")
+    if cmd == "set_tempo":
+        bpm = args.get("bpm")
+        if type(bpm) not in (int, float) or not math.isfinite(bpm) or not 10 <= bpm <= 522:
+            raise ValueError("bpm must be between 10 and 522.")
+    if cmd in ("set_plugin_param", "get_plugin_param_page", "get_plugin_params"):
+        index = args.get("index")
+        slot = args.get("slot", -1)
+        if (
+            type(index) is not int
+            or index < 0
+            or type(slot) is not int
+            or slot < -1
+            or not plugins.isValid(index, slot)
+        ):
+            raise ValueError("Plugin no longer exists. Inspect the plugin again.")
+        if cmd == "set_plugin_param":
+            param = args.get("param")
+            if type(param) is not int or not 0 <= param < plugins.getParamCount(index, slot):
+                raise ValueError("Plugin parameter no longer exists. Inspect the plugin again.")
+
     if cmd == "ping":
         return {"pong": True, "fl_version": general.getVersion()}
 
@@ -127,25 +218,12 @@ def _dispatch(cmd, args):
     if cmd == "get_plugin_params":
         index = args["index"]
         slot = args.get("slot", -1)
-        if not plugins.isValid(index, slot):
-            raise ValueError("no valid plugin at index %r, slot %r" % (index, slot))
-        count = plugins.getParamCount(index, slot)
-        params = []
-        for i in range(count):
-            try:
-                value_string = plugins.getParamValueString(i, index, slot)
-            except Exception:
-                # FL only supports the formatted value for some plugins.
-                value_string = None
-            params.append(
-                {
-                    "index": i,
-                    "name": plugins.getParamName(i, index, slot),
-                    "value": plugins.getParamValue(i, index, slot),
-                    "value_string": value_string,
-                }
-            )
-        return params
+        return _plugin_param_page(index, slot, 0, 64)["params"]
+
+    if cmd == "get_plugin_param_page":
+        return _plugin_param_page(
+            args["index"], args.get("slot", -1), args.get("start", 0), args.get("limit", 32)
+        )
 
     if cmd == "set_plugin_param":
         index = args["index"]
@@ -186,6 +264,14 @@ def _dispatch(cmd, args):
                 }
             )
         return {"channels": channels_state, "mixer_tracks": mixer_state}
+
+    if cmd == "get_tempo":
+        # FL represents the tempo as BPM multiplied by 1,000 in its script API.
+        return mixer.getCurrentTempo() / TEMPO_SCALE
+
+    if cmd == "set_tempo":
+        mixer.setCurrentTempo(round(args["bpm"] * TEMPO_SCALE))
+        return mixer.getCurrentTempo() / TEMPO_SCALE
 
     if cmd == "transport":
         action = args["action"]

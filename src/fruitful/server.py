@@ -1,12 +1,9 @@
-"""The Fruitful MCP server.
-
-Exposes tools to Claude (or any MCP client) and forwards them across the bridge to
-FL Studio.
-"""
+"""Local MCP tools for FL Studio."""
 
 from __future__ import annotations
 
 import math
+import re
 
 from fastmcp import FastMCP
 
@@ -56,7 +53,7 @@ def program_drum_pattern(channel: int, steps: list[bool]) -> str:
         channel: Channel Rack index (0-based).
         steps: list of on/off values, one per step (e.g. 16 booleans for a bar).
     """
-    _bridge.call("program_pattern", channel=channel, steps=[bool(s) for s in steps])
+    _bridge.call("program_pattern", channel=channel, steps=steps)
     return f"programmed {len(steps)} steps on channel {channel}"
 
 
@@ -135,7 +132,32 @@ def get_plugin_params(index: int, slot: int = -1) -> list[dict]:
         index: Channel Rack index for a generator, or mixer track index for an effect.
         slot: Mixer effect slot; leave at -1 for a Channel Rack generator.
     """
-    return _bridge.call("get_plugin_params", index=index, slot=slot)
+    first_page = _bridge.call("get_plugin_param_page", index=index, slot=slot, start=0, limit=32)
+    params = first_page["params"]
+    for start in range(len(params), first_page["total"], 32):
+        params.extend(
+            _bridge.call("get_plugin_param_page", index=index, slot=slot, start=start, limit=32)[
+                "params"
+            ]
+        )
+    return params
+
+
+@mcp.tool
+def get_plugin_param_page(index: int, start: int = 0, limit: int = 32, slot: int = -1) -> dict:
+    """Read one bounded page of plugin parameters, for large instruments such as Surge XT.
+
+    Args:
+        index: Channel Rack index for a generator, or mixer track index for an effect.
+        start: Zero-based first parameter index.
+        limit: Number of parameters to return, from 1 to 64.
+        slot: Mixer effect slot; leave at -1 for a Channel Rack generator.
+    """
+    if start < 0:
+        raise ValueError("start must not be negative")
+    if not 1 <= limit <= 64:
+        raise ValueError("limit must be between 1 and 64")
+    return _bridge.call("get_plugin_param_page", index=index, slot=slot, start=start, limit=limit)
 
 
 @mcp.tool
@@ -186,6 +208,119 @@ def search_cc0_sounds(query: str, limit: int = 10) -> dict:
     """
     return search_freesound(query, limit)
 
+
+@mcp.tool
+def get_tempo() -> float:
+    """Return the current project tempo in BPM."""
+    return _bridge.call("get_tempo")
+
+
+@mcp.tool
+def set_tempo(bpm: float) -> float:
+    """Set the project tempo in BPM and return the tempo applied by FL Studio."""
+    if not math.isfinite(bpm) or not 10 <= bpm <= 522:
+        raise ValueError("bpm must be between 10 and 522")
+    return _bridge.call("set_tempo", bpm=bpm)
+
+
+_HOUSE_CHANNEL_PATTERNS = {
+    "Kick": [True, False, False, False] * 4,
+    "Clap": [False, False, False, False, True, False, False, False] * 2,
+    "Closed Hat": [False, False, True, False] * 4,
+}
+_HOUSE_CHANNEL_ALIASES = {
+    "Kick": ("kick",),
+    "Clap": ("clap",),
+    "Closed Hat": ("closed hat", "closedhat", "hi hat", "hihat"),
+}
+
+
+def _matches_drum_role(name: str, role: str) -> bool:
+    normalized = " ".join(re.split(r"[\s_-]+", name.strip().casefold()))
+    if role == "Closed Hat" and "open" in normalized.split():
+        return False
+    return any(
+        normalized == alias or normalized.endswith(" " + alias)
+        for alias in _HOUSE_CHANNEL_ALIASES[role]
+    )
+
+
+def _house_channel_indexes(channels: list[dict]) -> dict[str, int]:
+    indexes = {}
+    errors = []
+    for role in _HOUSE_CHANNEL_ALIASES:
+        matches = [channel for channel in channels if _matches_drum_role(channel["name"], role)]
+        if len(matches) == 1:
+            indexes[role] = matches[0]["index"]
+        elif not matches:
+            errors.append(f"no {role} channel")
+        else:
+            names = ", ".join(channel["name"] for channel in matches)
+            errors.append(f"ambiguous {role} channels ({names})")
+    if errors:
+        available = ", ".join(
+            channel["name"] or f"channel {channel['index']}" for channel in channels
+        )
+        raise ValueError(
+            "Fruitful House Starter needs one unambiguous Kick, Clap, and Closed Hat channel. "
+            f"Problems: {'; '.join(errors)}. Available: {available or 'none'}"
+        )
+    if len(set(indexes.values())) != len(indexes):
+        raise ValueError("Use three separate channels named Kick, Clap, and Closed Hat.")
+    return indexes
+
+
+@mcp.tool
+def start_house_beat(bpm: float = 124.0, play: bool = True) -> dict:
+    """Program a one-bar four-on-the-floor house beat in a Fruitful House Starter template.
+
+    The active FL project needs one each of Kick, Clap, and Closed Hat channels with loaded drum
+    sounds. Names can include a sample prefix such as "808 Kick". This tool changes only those
+    channels, sets the tempo, and can start playback. It does not create or replace instruments.
+
+    Args:
+        bpm: House tempo from 100 to 140 BPM. Defaults to 124.
+        play: Start FL Studio playback after programming the bar. Defaults to True.
+    """
+    if not 100 <= bpm <= 140:
+        raise ValueError("house beat bpm must be between 100 and 140")
+
+    channels = _bridge.call("get_project_state")["channels"]
+    indexes = _house_channel_indexes(channels)
+
+    confirmed = []
+    action = "write drums"
+    try:
+        for name, steps in _HOUSE_CHANNEL_PATTERNS.items():
+            action = f"write {name}"
+            _bridge.call("program_pattern", channel=indexes[name], steps=steps)
+            action = f"check {name}"
+            actual = _bridge.call("get_pattern", channel=indexes[name], length=16)
+            if actual != steps:
+                raise BridgeError(f"{name} did not match the requested pattern.")
+            confirmed.append(name)
+        action = "set tempo"
+        applied_bpm = _bridge.call("set_tempo", bpm=bpm)
+        if (
+            not isinstance(applied_bpm, (int, float))
+            or not math.isfinite(applied_bpm)
+            or abs(applied_bpm - bpm) > 0.01
+        ):
+            raise BridgeError("FL did not confirm the requested tempo.")
+        if play:
+            action = "start playback"
+            _bridge.call("transport", action="play")
+    except BridgeError as error:
+        raise BridgeError(
+            f"Could not {action}. Confirmed drum rows: {', '.join(confirmed) or 'none'}. "
+            f"Other changes may have applied; inspect the current pattern before retrying. {error}"
+        ) from error
+    return {
+        "bpm": applied_bpm,
+        "channels": indexes,
+        "playing": play,
+        "drums_verified": True,
+    }
 
 
 def _validated_notes(notes: list[dict]) -> list[dict]:
@@ -238,7 +373,6 @@ def write_piano_roll_notes(notes: list[dict], mode: str = "add") -> list[dict]:
     return _piano_roll.call(f"{mode}_notes", notes=_validated_notes(notes))
 
 
-
 @mcp.tool
 def transport(action: str) -> str:
     """Control FL Studio playback.
@@ -250,8 +384,6 @@ def transport(action: str) -> str:
         raise ValueError('action must be one of "play", "stop", or "record"')
     _bridge.call("transport", action=action)
     return f"transport {action} sent"
-
-
 
 
 def main() -> None:

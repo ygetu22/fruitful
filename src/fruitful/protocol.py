@@ -30,7 +30,7 @@ DIR_RESPONSE = 0x02
 
 def encode(direction: int, payload: dict) -> list[int]:
     """Encode a payload dict into SysEx *data* bytes (excluding the F0/F7 framing)."""
-    text = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+    text = json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
     # ensure_ascii guarantees every char is < 0x80, so ord() yields valid SysEx data bytes.
     return [MANUFACTURER_ID, direction, *[ord(c) for c in text]]
 
