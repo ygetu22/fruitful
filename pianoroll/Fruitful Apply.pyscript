@@ -1,0 +1,100 @@
+import json
+import math
+import os
+
+import flpianoroll as flp
+
+# Piano Roll scripts do not provide __file__. The installer fills in this path.
+SCRIPT_DIR = "__FRUITFUL_PIANO_ROLL_DIR__"
+if SCRIPT_DIR.startswith("__FRUITFUL_"):
+    raise RuntimeError(
+        "Install this script with fruitful install-scripts --settings-dir ... --piano-roll first."
+    )
+REQUEST_FILE = os.path.join(SCRIPT_DIR, "fruitful_request.json")
+RESPONSE_FILE = os.path.join(SCRIPT_DIR, "fruitful_response.json")
+
+
+def _notes_from_score():
+    notes = []
+    for index in range(flp.score.noteCount):
+        note = flp.score.getNote(index)
+        notes.append(
+            {
+                "number": note.number,
+                "time": note.time / flp.score.PPQ,
+                "length": note.length / flp.score.PPQ,
+                "velocity": round(note.velocity, 6),
+            }
+        )
+    return notes
+
+
+def _prepare_notes(notes):
+    if not isinstance(notes, list) or not 1 <= len(notes) <= 4096:
+        raise ValueError("Supply 1 to 4096 notes.")
+    prepared = []
+    for data in notes:
+        if not isinstance(data, dict):
+            raise ValueError("Each note must be an object.")
+        number = data.get("number")
+        if type(number) is not int or not 0 <= number <= 127:
+            raise ValueError("Note number must be an integer from 0 to 127.")
+        time = data.get("time")
+        length = data.get("length")
+        velocity = data.get("velocity", 0.8)
+        for name, value in (("time", time), ("length", length), ("velocity", velocity)):
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError("Note %s must be a finite number." % name)
+        if time < 0 or length <= 0 or not 0 <= velocity <= 1:
+            raise ValueError("Note time, length, or velocity is outside its allowed range.")
+        note = flp.Note()
+        note.number = number
+        note.time = round(time * flp.score.PPQ)
+        note.length = max(1, round(length * flp.score.PPQ))
+        note.velocity = velocity
+        prepared.append(note)
+    return prepared
+
+
+def _add_notes(notes):
+    for note in notes:
+        flp.score.addNote(note)
+
+
+def _clear_notes():
+    for index in range(flp.score.noteCount - 1, -1, -1):
+        flp.score.deleteNote(index)
+
+
+def apply(form=None):
+    request_id = None
+    try:
+        try:
+            with open(REQUEST_FILE, "r") as request_file:
+                request = json.load(request_file)
+        except FileNotFoundError:
+            return  # The shortcut is harmless when there is no pending request.
+        # Consume before editing: running the shortcut twice must not repeat a write.
+        os.remove(REQUEST_FILE)
+        if not isinstance(request, dict):
+            raise ValueError("A request must be an object.")
+        request_id = request["id"]
+        action = request["action"]
+        args = request.get("args") or {}
+
+        if action == "get_notes":
+            result = _notes_from_score()
+        elif action in ("add_notes", "replace_notes"):
+            notes = _prepare_notes(args["notes"])
+            if action == "replace_notes":
+                _clear_notes()
+            _add_notes(notes)
+            result = _notes_from_score()
+        else:
+            raise ValueError("unknown action: %r" % action)
+        response = {"id": request_id, "ok": True, "result": result}
+    except Exception as error:
+        response = {"id": request_id, "ok": False, "error": str(error)}
+
+    with open(RESPONSE_FILE, "w") as response_file:
+        json.dump(response, response_file)

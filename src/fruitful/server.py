@@ -6,11 +6,13 @@ FL Studio.
 
 from __future__ import annotations
 
+import math
 import sys
 
 from fastmcp import FastMCP
 
 from .bridge import Bridge, BridgeError
+from .pianoroll import PianoRollBridge
 from .sounds import search_freesound
 from .styles import get_style, list_styles
 
@@ -19,6 +21,7 @@ mcp = FastMCP("Fruitful")
 # One shared bridge for the process. Opened lazily on first call so the server can
 # start even before FL/the virtual ports are ready.
 _bridge = Bridge()
+_piano_roll = PianoRollBridge()
 
 
 @mcp.tool
@@ -183,6 +186,57 @@ def search_cc0_sounds(query: str, limit: int = 10) -> dict:
     sound without an explicit future user action.
     """
     return search_freesound(query, limit)
+
+
+
+def _validated_notes(notes: list[dict]) -> list[dict]:
+    if not 1 <= len(notes) <= 4096:
+        raise ValueError("Supply 1 to 4096 notes. Empty writes are not allowed.")
+    validated = []
+    for index, note in enumerate(notes):
+        try:
+            number = note["number"]
+            time = float(note["time"])
+            length = float(note["length"])
+            velocity = float(note.get("velocity", 0.8))
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                f"note {index} must include numeric number, time, and length"
+            ) from error
+        if type(number) is not int or not 0 <= number <= 127:
+            raise ValueError(f"note {index} number must be between 0 and 127")
+        if not math.isfinite(time) or time < 0:
+            raise ValueError(f"note {index} time must not be negative")
+        if not math.isfinite(length) or length <= 0:
+            raise ValueError(f"note {index} length must be greater than zero")
+        if not 0 <= velocity <= 1:
+            raise ValueError(f"note {index} velocity must be between 0 and 1")
+        validated.append({"number": number, "time": time, "length": length, "velocity": velocity})
+    return validated
+
+
+@mcp.tool
+def get_piano_roll_notes() -> list[dict]:
+    """Read the notes in the Piano Roll currently open in FL Studio.
+
+    Each note includes MIDI number (60 is middle C), start time and length in beats, and
+    velocity from 0.0 to 1.0. Keep the intended instrument's Piano Roll open.
+    """
+    return _piano_roll.call("get_notes")
+
+
+@mcp.tool
+def write_piano_roll_notes(notes: list[dict], mode: str = "add") -> list[dict]:
+    """Add or replace notes in the Piano Roll currently open in FL Studio.
+
+    Args:
+        notes: Notes with MIDI number (0-127), time in beats, length in beats, and optional
+            velocity (0.0-1.0). Notes at the same time form a chord.
+        mode: "add" preserves current notes; "replace" clears them before writing the supplied notes.
+    """
+    if mode not in {"add", "replace"}:
+        raise ValueError('mode must be "add" or "replace"')
+    return _piano_roll.call(f"{mode}_notes", notes=_validated_notes(notes))
 
 
 
